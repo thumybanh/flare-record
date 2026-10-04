@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+ 
+[project]
+name = "flare_record"
+version = "0.1.0"
+description = "Search LMSAL and NOAA solar flare records from a local database"
+requires-python = ">=3.9"
+dependencies = [
+    "httpx",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+ 
+[project.scripts]
+flare-record-build = "flare_record.setup:_build_cli"
+ 
+[tool.setuptools]
+packages = ["flare_record"]
+ 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["real_db: checks the real database at ~/.flare_record/flares.db"]
