@@ -2,6 +2,8 @@
 
 Search LMSAL and NOAA solar flare records from one local database.
 
+![How flare_record works: source data is cleaned into one SQLite file, flares.db (built locally or downloaded ready-made), and getData turns your filters into one SQL query on it](docs/how-it-works.svg)
+
 ```python
 import flare_record as fs
 

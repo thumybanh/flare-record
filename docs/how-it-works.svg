@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="1200" height="760" role="img" aria-labelledby="title desc">
+  <title id="title">How flare_record works</title>
+  <desc id="desc">Source data from LMSAL and NOAA is cleaned into one SQLite file, flares.db, either by building it locally or by downloading the daily pre-built copy. getData turns your filters into one SQL query on that file and returns a list of flares.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b6672"/>
+    </marker>
+    <style>
+      .t { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2933; }
+      .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1f2933; }
+      .muted { fill: #5b6672; }
+      .h1 { font-size: 28px; font-weight: 700; }
+      .sub { font-size: 15px; }
+      .h2 { font-size: 16px; font-weight: 700; }
+      .h3 { font-size: 15px; font-weight: 650; }
+      .s13 { font-size: 13px; }
+      .s12 { font-size: 12.5px; }
+      .s11 { font-size: 11.5px; }
+      .card { fill: #ffffff; stroke: #cfd6de; stroke-width: 1.5; }
+      .row { fill: #f6f8fa; stroke: #e1e6eb; stroke-width: 1; }
+      .line { stroke: #5b6672; stroke-width: 1.6; fill: none; }
+      .badge-t { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; font-weight: 700; fill: #fff; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="760" rx="16" fill="#ffffff"/>
+
+  <!-- title -->
+  <text x="40" y="54" class="t h1">flare_record</text>
+  <text x="40" y="82" class="t sub muted">Search LMSAL and NOAA solar flare records from one local SQLite file: build it once, then every query runs offline.</text>
+
+  <!-- ============ column 1: get the database ============ -->
+  <circle cx="51" cy="122" r="11" fill="#2a78d6"/>
+  <text x="51" y="126.5" text-anchor="middle" class="badge-t">1</text>
+  <text x="70" y="127" class="t h2">Get the database</text>
+
+  <rect x="40" y="145" width="360" height="172" rx="10" class="card"/>
+  <text x="58" y="173" class="t h3">Source data</text>
+  <text x="58" y="193" class="t s12 muted">from the solar-events-dashboard repo</text>
+  <rect x="56" y="206" width="328" height="46" rx="6" class="row"/>
+  <text x="70" y="225" class="m s13">data/events.json</text>
+  <text x="70" y="243" class="t s12 muted">LMSAL · about 50k flares since 2002</text>
+  <rect x="56" y="259" width="328" height="46" rx="6" class="row"/>
+  <text x="70" y="278" class="m s13">data/noaa_data/*.txt</text>
+  <text x="70" y="296" class="t s12 muted">NOAA X-ray (XRA) lines · about 56k since 1996</text>
+
+  <line x1="220" y1="317" x2="220" y2="341" class="line" marker-end="url(#arrow)"/>
+
+  <rect x="40" y="344" width="360" height="206" rx="10" class="card"/>
+  <text x="58" y="372" class="m h3">flare-record-build</text>
+  <text x="58" y="392" class="t s12 muted">or build_database() from Python</text>
+  <g class="t s13">
+    <circle cx="66" cy="418" r="8" fill="#e8f0fb"/><text x="66" y="422" text-anchor="middle" class="t s11" style="font-weight:700;fill:#2a78d6">1</text>
+    <text x="82" y="422">Read every LMSAL event and NOAA XRA line</text>
+    <circle cx="66" cy="448" r="8" fill="#e8f0fb"/><text x="66" y="452" text-anchor="middle" class="t s11" style="font-weight:700;fill:#2a78d6">2</text>
+    <text x="82" y="452">Clean them into one format</text>
+    <text x="82" y="471" class="m s11 muted" xml:space="preserve">X1 → X1.0   C6,2 → C6.2   a3.7 → A3.7</text>
+    <text x="82" y="488" class="m s11 muted" xml:space="preserve">B1800 → 18:00   AR 13664 → 3664</text>
+    <circle cx="66" cy="512" r="8" fill="#e8f0fb"/><text x="66" y="516" text-anchor="middle" class="t s11" style="font-weight:700;fill:#2a78d6">3</text>
+    <text x="82" y="516">Drop exact duplicate rows</text>
+    <circle cx="66" cy="538" r="8" fill="#e8f0fb"/><text x="66" y="542" text-anchor="middle" class="t s11" style="font-weight:700;fill:#2a78d6">4</text>
+    <text x="82" y="542">Write the SQLite file, with indexes</text>
+  </g>
+
+  <text x="220" y="578" text-anchor="middle" class="t s12 muted">— or skip the build —</text>
+
+  <rect x="40" y="592" width="360" height="128" rx="10" class="card" style="stroke-dasharray:5 4"/>
+  <text x="58" y="620" class="t h3">Download it ready-made</text>
+  <text x="58" y="642" class="t s13">A GitHub bot rebuilds flares.db every day</text>
+  <text x="58" y="660" class="t s13">(07:00 UTC) and publishes it as the</text>
+  <text x="58" y="678" class="t s13">release <tspan class="m">latest-db</tspan>.</text>
+  <text x="58" y="704" class="m s12 muted">fs.download_database(url)</text>
+
+  <!-- arrows into the database -->
+  <path d="M400,447 L476,447" class="line" marker-end="url(#arrow)"/>
+  <path d="M400,656 L440,656 L440,560 L476,560" class="line" marker-end="url(#arrow)"/>
+
+  <!-- ============ column 2: the database ============ -->
+  <circle cx="491" cy="122" r="11" fill="#1a9e6f"/>
+  <text x="491" y="126.5" text-anchor="middle" class="badge-t">2</text>
+  <text x="510" y="127" class="t h2">One local file</text>
+
+  <path d="M480,190 L480,640 A120,22 0 0 0 720,640 L720,190" fill="#eef8f3" stroke="#1a9e6f" stroke-width="1.6"/>
+  <ellipse cx="600" cy="190" rx="120" ry="22" fill="#dcf1e7" stroke="#1a9e6f" stroke-width="1.6"/>
+  <text x="600" y="246" text-anchor="middle" class="t" style="font-size:20px;font-weight:700">flares.db</text>
+  <text x="600" y="268" text-anchor="middle" class="t s12 muted">SQLite · about 107k flares</text>
+  <text x="600" y="288" text-anchor="middle" class="m s11 muted">~/.flare_record/flares.db</text>
+  <line x1="500" y1="306" x2="700" y2="306" stroke="#bfe3d1"/>
+  <text x="600" y="330" text-anchor="middle" class="t s13" style="font-weight:650">table <tspan class="m">flares</tspan></text>
+  <g class="m s12" text-anchor="middle">
+    <text x="600" y="360">source</text>
+    <text x="600" y="384">begin_time</text>
+    <text x="600" y="408">peak_time</text>
+    <text x="600" y="432">end_time</text>
+    <text x="600" y="456">goes_class</text>
+    <text x="600" y="480">goes_family</text>
+    <text x="600" y="504">goes_magnitude</text>
+    <text x="600" y="528">active_region</text>
+  </g>
+  <line x1="500" y1="552" x2="700" y2="552" stroke="#bfe3d1"/>
+  <text x="600" y="576" text-anchor="middle" class="t s12 muted">5 indexes keep filters fast</text>
+  <text x="600" y="596" text-anchor="middle" class="t s12 muted">One row per flare, per source</text>
+
+  <!-- ============ column 3: query it ============ -->
+  <circle cx="811" cy="122" r="11" fill="#d9612a"/>
+  <text x="811" y="126.5" text-anchor="middle" class="badge-t">3</text>
+  <text x="830" y="127" class="t h2">Query it</text>
+
+  <rect x="800" y="145" width="360" height="248" rx="10" class="card"/>
+  <text x="818" y="173" class="m s12 muted">import flare_record as fs</text>
+  <text x="818" y="203" class="m s13" style="font-weight:700">fs.getData(</text>
+  <g class="m s13">
+    <text x="838" y="228">source=<tspan fill="#a3450f">'NOAA'</tspan>,</text>
+    <text x="838" y="251">timerange=<tspan fill="#a3450f">'2024-05'</tspan>,</text>
+    <text x="838" y="274">flareType=<tspan fill="#a3450f">'x'</tspan>,</text>
+    <text x="838" y="297">GOESclass=<tspan fill="#a3450f">'X1'</tspan>,</text>
+    <text x="838" y="320">activeRegion=<tspan fill="#a3450f">13664</tspan>)</text>
+  </g>
+  <text x="818" y="352" class="t s12 muted">Every filter is optional; filters combine with AND.</text>
+  <text x="818" y="372" class="t s12 muted">Text is case-insensitive: 'noaa', ' AR3664 ' work.</text>
+
+  <!-- query goes into the file, rows come back -->
+  <path d="M800,300 L724,300" class="line" marker-end="url(#arrow)"/>
+  <text x="762" y="286" text-anchor="middle" class="t s11 muted">one SQL</text>
+  <text x="762" y="320" text-anchor="middle" class="t s11 muted">query</text>
+  <path d="M724,505 L796,505" class="line" marker-end="url(#arrow)"/>
+  <text x="760" y="491" text-anchor="middle" class="t s11 muted">rows</text>
+
+  <rect x="800" y="420" width="360" height="172" rx="10" class="card"/>
+  <text x="818" y="448" class="t h3">A list of dicts, sorted by time</text>
+  <g class="m s12">
+    <text x="818" y="476">[{'source': 'NOAA',</text>
+    <text x="832" y="495">'begin_time': '2024-05-14T02:03:00',</text>
+    <text x="832" y="514">'goes_class': 'X1.7',</text>
+    <text x="832" y="533">'active_region': 3664, ...}, ...]</text>
+  </g>
+  <text x="818" y="566" class="t s12 muted">Plain Python, so it drops straight into</text>
+  <text x="818" y="583" class="t s12 muted">csv, pandas or a plot.</text>
+
+  <rect x="800" y="612" width="360" height="108" rx="10" fill="#fdf4ef" stroke="#f0c9b4" stroke-width="1.5"/>
+  <text x="818" y="640" class="t h3">If something is wrong, it says so</text>
+  <text x="818" y="664" class="t s12">Bad filter → <tspan class="m">ValueError</tspan> naming what it expected</text>
+  <text x="818" y="684" class="t s12">Missing or broken file →</text>
+  <text x="818" y="702" class="t s12"><tspan class="m">FlareDatabaseError</tspan> with the command that fixes it</text>
+</svg>
