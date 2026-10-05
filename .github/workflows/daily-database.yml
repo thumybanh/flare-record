@@ -1,0 +1,90 @@
+name: Daily database build
+
+on:
+  schedule:
+    # 07:00 UTC daily — an hour after the solar-events-dashboard bot (06:00) commits new data
+    - cron: '0 7 * * *'
+  workflow_dispatch:        # lets you trigger a run by hand from the Actions tab
+
+permissions:
+  contents: write           # needed to create the release and upload flares.db to it
+
+env:
+  RELEASE_TAG: latest-db
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get the source data from solar-events-dashboard
+        uses: actions/checkout@v4
+        with:
+          repository: thumybanh/solar-events-dashboard
+          path: dashboard
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install the package
+        run: pip install ".[test]"
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Build flares.db
+        env:
+          FLARE_RECORD_EVENTS_JSON: dashboard/data/events.json
+          FLARE_RECORD_NOAA_DIR: dashboard/data/noaa_data
+          FLARE_RECORD_DB: ${{ github.workspace }}/flares.db
+        run: flare-record-build
+
+      - name: Check the database works
+        env:
+          FLARE_RECORD_DB: ${{ github.workspace }}/flares.db
+        run: |
+          python - <<'EOF'
+          import flare_record as fs
+          rows = fs.getData()
+          assert len(rows) > 100000, f"only {len(rows)} rows"
+          assert {r['source'] for r in rows} == {'LMSAL', 'NOAA'}, "a source is missing"
+          print(f"{len(rows)} rows, latest flare {rows[-1]['begin_time']}")
+          EOF
+
+      - name: Verify the database did not shrink
+        # the source data only ever grows, so fewer rows than yesterday means something parsed wrong
+        # and must not replace the good copy
+        run: |
+          count() { python -c "import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM flares').fetchone()[0])" "$1"; }
+          AFTER=$(count flares.db)
+          if gh release download "$RELEASE_TAG" --pattern flares.db --output previous.db 2>/dev/null; then
+            BEFORE=$(count previous.db)
+          else
+            echo "No previous release yet."
+            BEFORE=0
+          fi
+          echo "rows: $BEFORE -> $AFTER"
+          if [ "$AFTER" -lt "$BEFORE" ]; then
+            echo "::error::Row count dropped from $BEFORE to $AFTER — refusing to publish."
+            exit 1
+          fi
+          echo "ROWS=$AFTER" >> "$GITHUB_ENV"
+
+      - name: Publish flares.db to the latest-db release
+        run: |
+          LATEST=$(python -c "import sqlite3;print(sqlite3.connect('flares.db').execute('SELECT MAX(begin_time) FROM flares').fetchone()[0][:10])")
+          DASHBOARD_SHA=$(git -C dashboard rev-parse --short HEAD)
+          NOTES="Pre-built flare database: $ROWS rows, latest flare $LATEST.
+          Built $(date -u +%Y-%m-%d) from solar-events-dashboard commit $DASHBOARD_SHA."
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --title "Latest flare database" --notes "$NOTES"
+          fi
+          gh release upload "$RELEASE_TAG" flares.db --clobber
+          gh release edit "$RELEASE_TAG" --notes "$NOTES"
