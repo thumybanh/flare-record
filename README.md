@@ -16,19 +16,24 @@ fs.getData(GOESclass='X1', timerange='20240514', source='NOAA')
 ```
 
 No network access is needed once the database is built. Every `getData()`
-call reads a local SQLite file.
+call reads a local SQLite file, so queries are fast: all 106,651 rows come
+back in about 0.1 s, and a filtered query in a few milliseconds.
 
-This package is separate from the repo's web API (`api.py`). Both read the
-same `events.json`, but neither depends on the other: the API keeps working
-without this package, and this package works without the API running.
+This package is separate from the
+[`solar-events-dashboard`](https://github.com/thumybanh/solar-events-dashboard)
+web API. Both read the same `events.json`, but neither depends on the other:
+the API keeps working without this package, and this package works without
+the API running.
 
 ## Contents
 
 - [Quick start](#quick-start)
 - [Trying it in the terminal](#trying-it-in-the-terminal)
 - [Query guide](#query-guide)
+- [Recipes](#recipes)
 - [Filters](#filters)
 - [What you get back](#what-you-get-back)
+- [API reference](#api-reference)
 - [How it works](#how-it-works)
 - [Notes on the data](#notes-on-the-data)
 - [Configuration](#configuration)
@@ -36,6 +41,9 @@ without this package, and this package works without the API running.
 - [Tests](#tests)
 
 ## Quick start
+
+Requires Python 3.9 or newer. The only dependency, `httpx`, installs
+automatically (it's used only by `download_database()`).
 
 **1. Install** (into any virtual environment):
 
@@ -141,12 +149,6 @@ fs.getData(source=['NOAA', 'LMSAL'], timerange='20240514')  # 17 flares
 # Every flare in the database
 fs.getData()                                      # 106,651 flares
 ```
-M8.7 on 2012-01-23
-
-from collections import Counter
-# Count by source
-Counter(r['source'] for r in fs.getData(flareType='x', timerange='2024'))
-# {'LMSAL': 51, 'NOAA': 54}
 
 ### Dates: a year, a month, a day, a range, or a time window
 
@@ -214,32 +216,134 @@ NOAA   2024-05-14T02:03:00  X1.7  AR 3664
 NOAA   2024-05-14T12:40:00  X1.2  AR 3664
 ```
 
-### Working with the results
+## Recipes
 
-Results are plain Python lists of dicts, so ordinary Python is enough:
+Results are plain Python lists of dicts, so ordinary Python is enough.
+Each recipe below runs as written after `import flare_record as fs`.
+
+### Count flares
 
 ```python
 from collections import Counter
 
-# Count by family
+# By class family
 may = fs.getData(timerange='202405', source='NOAA')
 Counter(r['goes_class'][0] for r in may)
 # {'C': 235, 'M': 122, 'X': 21}
 
-# Count by source
+# By source
 Counter(r['source'] for r in fs.getData(flareType='x', timerange='2024'))
 # {'LMSAL': 51, 'NOAA': 54}
 
-# Biggest flare
+# By year
+x_flares = fs.getData(source='NOAA', flareType='x', timerange=('2020', '2025'))
+sorted(Counter(r['begin_time'][:4] for r in x_flares).items())
+# [('2021', 2), ('2022', 7), ('2023', 13), ('2024', 54), ('2025', 18)]
+```
+
+### Find the biggest flare
+
+```python
+# Within one family, the number after the letter is enough
 max(fs.getData(flareType='x', source='NOAA'), key=lambda r: float(r['goes_class'][1:]))
 # {'source': 'NOAA', 'begin_time': '2001-04-02T21:32:00', ..., 'goes_class': 'X20.0', 'active_region': 9393}
 
-# Several families: combine calls, then re-sort by time
+# Across families, rank the letter first (A < B < C < M < X)
+def strength(r):
+    return 'ABCMX'.index(r['goes_class'][0]), float(r['goes_class'][1:] or 0)
+
+max(fs.getData(activeRegion=3664), key=strength)
+# {'source': 'LMSAL', 'begin_time': '2024-05-14T16:46:00', ..., 'goes_class': 'X8.7', 'active_region': 3664}
+```
+
+### Combine several families
+
+`flareType` takes one family per call, so combine calls and re-sort:
+
+```python
 m_and_x = fs.getData(timerange='202405', flareType='m') + fs.getData(timerange='202405', flareType='x')
 m_and_x.sort(key=lambda r: r['begin_time'])
 ```
 
-If you use pandas, `pd.DataFrame(results)` turns any result into a table.
+### Flare duration
+
+```python
+from datetime import datetime
+
+def duration_minutes(r):
+    if r['end_time'] is None:
+        return None
+    begin = datetime.fromisoformat(r['begin_time'])
+    end = datetime.fromisoformat(r['end_time'])
+    return (end - begin).total_seconds() / 60
+
+flare = fs.getData(source='NOAA', GOESclass='X8.7', timerange='2024')[0]
+duration_minutes(flare)    # 16.0
+```
+
+### Compare LMSAL and NOAA side by side
+
+Group rows by begin time to see where the two catalogs agree:
+
+```python
+from collections import defaultdict
+
+by_start = defaultdict(dict)
+for r in fs.getData(flareType='x', timerange='202405'):
+    by_start[r['begin_time']][r['source']] = r['goes_class']
+
+for start, classes in by_start.items():
+    print(start, classes)
+```
+
+```
+2024-05-03T02:11:00 {'LMSAL': 'X1.7', 'NOAA': 'X1.6'}
+2024-05-05T05:47:00 {'LMSAL': 'X1.3', 'NOAA': 'X1.3'}
+2024-05-05T11:41:00 {'LMSAL': 'X1.3', 'NOAA': 'X1.2'}
+2024-05-06T05:38:00 {'LMSAL': 'X4.5', 'NOAA': 'X4.5'}
+...
+```
+
+```python
+# Flares where the two catalogs give different classes
+{start: c for start, c in by_start.items() if len(set(c.values())) > 1}
+```
+
+This pairs flares only when both sources give the *exact same* begin
+time. The sources sometimes differ by a minute or more, so a flare that
+shows up under one source only may still be in the other with a slightly
+different time.
+
+### Save to CSV
+
+```python
+import csv
+
+results = fs.getData(flareType='x', timerange='2024')
+with open('x_flares_2024.csv', 'w', newline='') as f:
+    writer = csv.DictWriter(f, fieldnames=results[0].keys())
+    writer.writeheader()
+    writer.writerows(results)
+```
+
+```
+source,begin_time,peak_time,end_time,goes_class,active_region
+LMSAL,2024-02-09T12:53:00,2024-02-09T13:14:00,2024-02-09T13:31:00,X3.4,3575
+NOAA,2024-02-09T12:53:00,2024-02-09T13:14:00,2024-02-09T13:32:00,X3.3,3575
+...
+```
+
+### Use with pandas
+
+pandas isn't required, but if you have it, any result becomes a table:
+
+```python
+import pandas as pd
+
+df = pd.DataFrame(fs.getData(flareType='x', timerange='2024'))
+df['begin_time'] = pd.to_datetime(df['begin_time'])
+df.to_csv('x_flares_2024.csv', index=False)
+```
 
 ## Filters
 
@@ -247,9 +351,9 @@ If you use pandas, `pd.DataFrame(results)` turns any result into a table.
 
 | Parameter | What it filters | Examples |
 |---|---|---|
-| `source` | Which catalog | `'NOAA'`, `'LMSAL'`, `['NOAA', 'LMSAL']` |
+| `source` | Which catalog | `'NOAA'`, `'LMSAL'`, `['NOAA', 'LMSAL']` (a list, tuple or set) |
 | `timerange` | When the flare began | `'2024'`, `'202405'`, `'20240514'`, `'2024-05-14'`, `('20240501', '20240531')` |
-| `flareType` | Class family | `'a'`, `'b'`, `'c'`, `'m'`, `'x'` |
+| `flareType` | Class family | `'a'`, `'b'`, `'c'`, `'m'`, `'x'` (or uppercase) |
 | `GOESclass` | Family, class bin, or exact class | `'X'`, `'X1'`, `'X1.0'`, `'C1.23'` |
 | `activeRegion` | NOAA active region | `13664`, `'3664'`, `'AR13664'` |
 
@@ -265,7 +369,7 @@ If you use pandas, `pd.DataFrame(results)` turns any result into a table.
 | You pass | It means |
 |---|---|
 | `'2024'` | All of 2024 |
-| `'202405'` or `'2024-05'` | All of May 2024 |
+| `'202405'`, `'2024-05'` or `'2024/05'` | All of May 2024 |
 | `'20240514'`, `'2024-05-14'` or `'2024/05/14'` | All of that day |
 | `datetime.date(2024, 5, 14)` | All of that day |
 | `datetime.datetime(2024, 5, 14, 12, 0)` | That exact minute |
@@ -322,8 +426,74 @@ Times are ISO strings, so they sort and compare correctly as text. Use
 or end time falls after midnight, it's already on the next day's date.
 
 The same flare usually appears twice, once per source. The sources can
-differ slightly on class or times (NOAA X3.9 vs LMSAL X4.0), so each row is
-kept as its source reported it.
+differ slightly on class or times (on 2024-05-10 at 06:27, NOAA says X3.9
+and LMSAL says X4.0), so each row is kept as its source reported it.
+
+## API reference
+
+Everything below is available after `import flare_record as fs`.
+
+| Name | What it does |
+|---|---|
+| `getData(...)` | Query the database. See [Filters](#filters). |
+| `build_database(events_json_path, noaa_data_dir, output_path=None)` | Build the database from source files |
+| `download_database(url, output_path=None)` | Download a pre-built database file |
+| `FlareDatabaseError` | Base class for database errors |
+| `FlareDatabaseNotFoundError` | No database file at the path |
+| `FlareDatabaseInvalidError` | File exists but can't be used |
+| `__version__` | Package version, e.g. `'0.1.0'` |
+
+Plus one terminal command, `flare-record-build`.
+
+### `getData(source=None, timerange=None, flareType=None, GOESclass=None, activeRegion=None)`
+
+Returns a list of dicts sorted by begin time (see
+[What you get back](#what-you-get-back)). Every argument is optional; see
+[Filters](#filters) for what each one accepts. Raises `ValueError` for an
+unusable filter value and `FlareDatabaseError` if the database is missing
+or broken.
+
+### `build_database(events_json_path, noaa_data_dir, output_path=None)`
+
+Python version of `flare-record-build`. Reads the LMSAL `events.json` and
+the folder of NOAA `YYYYMMDDevents.txt` files, writes a fresh database, and
+returns its path. Any database already at that path is deleted first.
+
+```python
+fs.build_database('data/events.json', 'data/noaa_data')
+# PosixPath('/Users/you/.flare_record/flares.db')
+```
+
+`output_path` writes somewhere other than the default, which is handy for
+keeping a second copy, e.g. a snapshot before the source data changes:
+
+```python
+fs.build_database('data/events.json', 'data/noaa_data', output_path='flares-2026-10.db')
+```
+
+To query a copy like that, see [Configuration](#configuration).
+
+### `download_database(url, output_path=None)`
+
+Downloads a pre-built `flares.db` file from `url` to the default database
+location (or `output_path`) and returns its path, so you can skip the build
+step and don't need the source data.
+
+```python
+fs.download_database('https://example.com/flares.db')
+```
+
+No pre-built database is hosted yet; until one is, use `flare-record-build`.
+The download replaces any database already at that path. The file isn't
+checked during download, but the next `getData()` call checks it and raises
+`FlareDatabaseInvalidError` if the download was incomplete or wasn't a
+database.
+
+### `flare-record-build`
+
+Terminal command that calls `build_database()` with paths taken from
+environment variables, or `data/events.json` and `data/noaa_data` in the
+current folder. Takes no arguments. See [Configuration](#configuration).
 
 ## How it works
 
@@ -408,7 +578,7 @@ Things that can look surprising:
 
 | Environment variable | Used by | Default |
 |---|---|---|
-| `FLARE_RECORD_DB` | `getData()` and `flare-record-build` | `~/.flare_record/flares.db` |
+| `FLARE_RECORD_DB` | `getData()`, `flare-record-build`, and `build_database()` / `download_database()` when no `output_path` is given | `~/.flare_record/flares.db` |
 | `FLARE_RECORD_EVENTS_JSON` | `flare-record-build` | `data/events.json` under the current folder |
 | `FLARE_RECORD_NOAA_DIR` | `flare-record-build` | `data/noaa_data` under the current folder |
 
@@ -426,8 +596,21 @@ To keep the database somewhere else (`~` works):
 export FLARE_RECORD_DB=~/data/flares.db
 ```
 
+`getData()` reads `FLARE_RECORD_DB` on every call, so you can switch
+databases from inside Python:
+
+```python
+import os
+
+os.environ['FLARE_RECORD_DB'] = 'flares-2026-10.db'
+len(fs.getData())               # rows in the snapshot
+del os.environ['FLARE_RECORD_DB']
+len(fs.getData())               # back to ~/.flare_record/flares.db
+```
+
 From Python, `fs.build_database('data/events.json', 'data/noaa_data')` does the
-same as the command and returns the path it wrote.
+same as the command and returns the path it wrote (see
+[API reference](#api-reference)).
 
 ## Errors
 
@@ -453,7 +636,9 @@ handle any database problem.
 | Path is a folder | `it is a directory, not a database file` |
 | Empty file | `the file is empty (0 bytes), possibly an interrupted build or download` |
 | Not a SQLite file | `not a valid SQLite file` |
+| SQLite file, but not a flare database | `missing the 'flares' table` |
 | Built by an older version | `missing columns: [...]` — rebuild with `flare-record-build` |
+| Table has no rows | `the flares table is empty` |
 
 A value `getData()` can't use raises `ValueError` saying what it expected,
 instead of quietly returning an empty list:
@@ -469,6 +654,12 @@ getData(source='GOES')
     ValueError: source must be one of ['LMSAL', 'NOAA'] or a list of them, got 'GOES'
 getData(activeRegion='abc')
     ValueError: activeRegion must be a region number like 13664 or 'AR3664', got 'abc'
+getData(flareType='z')
+    ValueError: flareType must be one of ['A', 'B', 'C', 'M', 'X'], got 'z'
+getData(timerange=20240514)
+    ValueError: timerange dates must look like '2024', '202405', '20240514' or '2024-05-14', or be a date/datetime, got 20240514
+getData(timerange=('2024',))
+    ValueError: timerange must be one date or a (start, end) pair, got 1 items: ('2024',)
 ```
 
 ## Tests
