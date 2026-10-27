@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="1200" height="760" role="img" aria-labelledby="title desc">
   <title id="title">How flare_record works</title>
-  <desc id="desc">Source data from LMSAL and NOAA is cleaned into one SQLite file, flares.db, either by building it locally or by downloading the daily pre-built copy. getData turns your filters into one SQL query on that file and returns a list of flares.</desc>
+  <desc id="desc">Source data from LMSAL and NOAA is cleaned into one SQLite file, flares.db, built locally. getData turns your filters into one SQL query on that file and returns a list of flares.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#5b6672"/>
@@ -62,18 +62,8 @@
     <text x="82" y="542">Write the SQLite file, with indexes</text>
   </g>
 
-  <text x="220" y="578" text-anchor="middle" class="t s12 muted">— or skip the build —</text>
-
-  <rect x="40" y="592" width="360" height="128" rx="10" class="card" style="stroke-dasharray:5 4"/>
-  <text x="58" y="620" class="t h3">Download it ready-made</text>
-  <text x="58" y="642" class="t s13">A GitHub bot rebuilds flares.db every day</text>
-  <text x="58" y="660" class="t s13">(07:00 UTC) and publishes it as the</text>
-  <text x="58" y="678" class="t s13">release <tspan class="m">latest-db</tspan>.</text>
-  <text x="58" y="704" class="m s12 muted">fs.download_database(url)</text>
-
-  <!-- arrows into the database -->
+  <!-- arrow into the database -->
   <path d="M400,447 L476,447" class="line" marker-end="url(#arrow)"/>
-  <path d="M400,656 L440,656 L440,560 L476,560" class="line" marker-end="url(#arrow)"/>
 
   <!-- ============ column 2: the database ============ -->
   <circle cx="491" cy="122" r="11" fill="#1a9e6f"/>
