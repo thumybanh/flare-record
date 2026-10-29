@@ -9,6 +9,7 @@ download_database() is the function a user would call to just fetches a file to 
 so no one needs the raw repo to use the package.
 """
 
+import csv
 import json
 import os
 import re
@@ -88,8 +89,11 @@ def _time_after(begin_dt, hms_string):
  
 
 def _load_lmsal_events(events_json_path):
+    return _lmsal_rows(json.load(open(events_json_path)))
+
+def _lmsal_rows(raw_events):
+    # raw_events: dicts shaped like LMSAL's events.json entries (also what update_database() scrapes)
     events = []
-    raw_events = json.load(open(events_json_path))
     for ev in raw_events:
         parsed_class = _parse_class(ev.get("event_GOES") or "")
         if not parsed_class:
@@ -112,14 +116,46 @@ def _load_lmsal_events(events_json_path):
         })
     return events
 
-def build_database(events_json_path, noaa_data_dir, output_path=None):
+def _load_ncei_flares(csv_path):
+    # NCEI's science-quality GOES flare report: one CSV row per flare.
+    flares = []
+    with open(csv_path, newline="") as f:
+        for row in csv.DictReader(f):
+            parsed_class = _parse_class(row.get("flare_class") or "")
+            try:
+                begin_dt = datetime.fromisoformat((row.get("start_time") or "").strip())
+            except ValueError:
+                continue
+            if not parsed_class:
+                continue
+            goes_class, goes_magnitude = parsed_class
+            peak_dt = _iso_or_none(row.get("time"))
+            end_dt = _iso_or_none(row.get("end_time"))
+            region = (row.get("active_region") or "").strip()
+            flares.append({
+                "source": "NCEI", "begin_time": begin_dt.isoformat(),
+                "peak_time": peak_dt, "end_time": end_dt,
+                "goes_class": goes_class, "goes_magnitude": goes_magnitude,
+                "active_region": int(region) % 10000 if region.isdigit() and int(region) % 10000 else None,
+            })
+    return flares
+
+def _iso_or_none(text):
+    try:
+        return datetime.fromisoformat((text or "").strip()).isoformat()
+    except ValueError:
+        return None
+
+def build_database(events_json_path, noaa_data_dir, output_path=None, ncei_csv_path=None):
     """Builds flares.db from local source files.
- 
+
     events_json_path: path to LMSAL's events.json
     noaa_data_dir: path to the folder of noaa_data/*.txt files
     output_path: where to write the database (defaults to the standard
                  location get_db_path() looks for)
- 
+    ncei_csv_path: optional NCEI science-quality flare report (CSV); adds
+                   its flares as source "NCEI"
+
     Returns the path the database was written to.
     """
 
@@ -158,12 +194,18 @@ def build_database(events_json_path, noaa_data_dir, output_path=None):
     print(f"Loading NOAA flares from {noaa_data_dir}...")
     noaa_rows = _load_noaa_flares(noaa_data_dir)
     print(f"  {len(noaa_rows)} flares")
- 
+
+    ncei_rows = []
+    if ncei_csv_path:
+        print(f"Loading NCEI flares from {ncei_csv_path}...")
+        ncei_rows = _load_ncei_flares(ncei_csv_path)
+        print(f"  {len(ncei_rows)} flares")
+
     # Some NOAA files repeat the same event line; keep one copy of rows that are identical in every column.
     all_rows = list(dict.fromkeys(
         (r["source"], r["begin_time"], r["peak_time"], r["end_time"],
          r["goes_class"], r["goes_class"][0], r["goes_magnitude"], r["active_region"])
-        for r in lmsal_rows + noaa_rows
+        for r in lmsal_rows + noaa_rows + ncei_rows
     ))
     conn.executemany(
         "INSERT INTO flares (source, begin_time, peak_time, end_time, "
@@ -208,4 +250,9 @@ def _build_cli():
             f"Can't find the {noaa_dir}/ folder. Run this from the "
             f"solar-events-dashboard repo root, or set FLARE_RECORD_NOAA_DIR."
         )
-    build_database(events_json, noaa_dir)
+    # optional: NCEI's science-quality report, from the env var or the dashboard repo's data/goes_sciquality/
+    ncei_csv = os.environ.get("FLARE_RECORD_NCEI_CSV")
+    if not ncei_csv:
+        found = sorted(Path("data", "goes_sciquality").glob("sci_xrsf-l2-flrpt_geo_*.csv"))
+        ncei_csv = str(found[-1]) if found else None
+    build_database(events_json, noaa_dir, ncei_csv_path=ncei_csv)

@@ -1,6 +1,6 @@
 # flare_record
 
-Search LMSAL and NOAA solar flare records from one local database.
+Search LMSAL, NOAA and NCEI solar flare records from one local database.
 
 ![How flare_record works: source data is cleaned into one SQLite file, flares.db (built locally), and getData turns your filters into one SQL query on it](docs/how-it-works.svg)
 
@@ -31,6 +31,7 @@ the API running.
 
 - [Quick start](#quick-start)
 - [Trying it in the terminal](#trying-it-in-the-terminal)
+- [Updating the data](#updating-the-data)
 - [Query guide](#query-guide)
 - [Recipes](#recipes)
 - [Filters](#filters)
@@ -44,8 +45,8 @@ the API running.
 
 ## Quick start
 
-Requires Python 3.9 or newer. The only dependency, `httpx`, installs
-automatically (it's used only by `download_database()`).
+Requires Python 3.9 or newer. The dependencies, `httpx` and `beautifulsoup4`,
+install automatically (they're used only to download and update data).
 
 **1. Install** (into any virtual environment):
 
@@ -130,6 +131,62 @@ session keeps using the old code.
 | `Can't find data/events.json` from `flare-record-build` | `cd` to the `solar-events-dashboard` root first |
 | `FlareDatabaseNotFoundError` or `FlareDatabaseInvalidError` | `cd` to the `solar-events-dashboard` root, run `flare-record-build` |
 
+## Updating the data
+
+The package is a snapshot, so a database built from it falls behind. To catch up
+on your own, run this in a terminal:
+
+```bash
+flare-record-update
+```
+
+```
+Updating LMSAL...
+  17 LMSAL snapshots since 20261012
+Updating NOAA...
+Updating NCEI...
+  downloading sci_xrsf-l2-flrpt_geo_s19950103_e20261027_v1-0-1.csv
+
+LMSAL: +113 flares
+NOAA: +89 flares
+NCEI: +81957 flares
+```
+
+It continues from your database instead of starting over. Each source is asked
+only for flares newer than the newest one you already have, so an update takes
+seconds to a few minutes, however old your database is. Run it as often as you
+like; a second run right after the first adds nothing.
+
+| Source | What it downloads |
+|---|---|
+| LMSAL | The archive snapshots from a week before your newest LMSAL flare, adding flares you don't have. The week of overlap picks up entries LMSAL corrected after posting. |
+| NOAA | NOAA's daily event reports from your newest flare's day to yesterday. The rows of those days are replaced. |
+| NCEI | NCEI's current science-quality report (always one whole file). It is added as source `'NCEI'` and replaces the NCEI rows, unless it has fewer flares or lost region numbers, in which case it is refused. |
+
+```bash
+flare-record-update --source noaa          # one source
+flare-record-update --source lmsal noaa    # or several
+```
+
+The same from Python:
+
+```python
+fs.update_database()                  # all three
+fs.update_database('NOAA')            # one
+fs.update_database(['LMSAL', 'NCEI'])
+# {'LMSAL': {'added': 113}, 'NCEI': {'added': 81957}}
+```
+
+If one source can't be reached it is left exactly as it was, its error is
+reported (`{'NCEI': {'error': '...'}}`, and the command exits with status 1),
+and the other sources still update. A source that was interrupted partway
+picks up where it stopped on the next update.
+
+An update needs a database to continue from, so build or download one first.
+Your database must already hold LMSAL and NOAA flares to update those sources.
+LMSAL data you scrape yourself comes straight from the archive: it includes
+the duplicate entries that the dashboard merges into one flare.
+
 ## Query guide
 
 Copy any of these into Python after `import flare_record as fs`. Output is
@@ -144,7 +201,7 @@ fs.getData(source='NOAA', flareType='x')         # 281 flares
 # Everything from both sources on one day
 fs.getData(timerange='20240514')                  # 17 flares
 
-# Only LMSAL, or both sources named explicitly (same as leaving source out)
+# Only LMSAL, or two sources named explicitly (leaving source out means every source in the database)
 fs.getData(source='lmsal', timerange='20240514')  # 11 flares
 fs.getData(source=['NOAA', 'LMSAL'], timerange='20240514')  # 17 flares
 
@@ -353,7 +410,7 @@ df.to_csv('x_flares_2024.csv', index=False)
 
 | Parameter | What it filters | Examples |
 |---|---|---|
-| `source` | Which catalog | `'NOAA'`, `'LMSAL'`, `['NOAA', 'LMSAL']` (a list, tuple or set) |
+| `source` | Which catalog | `'NOAA'`, `'LMSAL'`, `'NCEI'` (after an [update](#updating-the-data)), `['NOAA', 'LMSAL']` (a list, tuple or set) |
 | `timerange` | When the flare began | `'2024'`, `'202405'`, `'20240514'`, `'2024-05-14'`, `('20240501', '20240531')` |
 | `flareType` | Class family | `'a'`, `'b'`, `'c'`, `'m'`, `'x'` (or uppercase) |
 | `GOESclass` | Family, class bin, or exact class | `'X'`, `'X1'`, `'X1.0'`, `'C1.23'` |
@@ -440,12 +497,13 @@ Everything below is available after `import flare_record as fs`.
 | `getData(...)` | Query the database. See [Filters](#filters). |
 | `build_database(events_json_path, noaa_data_dir, output_path=None)` | Build the database from source files |
 | `download_database(url, output_path=None)` | Download a pre-built database file |
+| `update_database(sources=None, output_path=None)` | Bring the database up to date from the sources |
 | `FlareDatabaseError` | Base class for database errors |
 | `FlareDatabaseNotFoundError` | No database file at the path |
 | `FlareDatabaseInvalidError` | File exists but can't be used |
 | `__version__` | Package version, e.g. `'0.1.0'` |
 
-Plus one terminal command, `flare-record-build`.
+Plus two terminal commands, `flare-record-build` and `flare-record-update`.
 
 ### `getData(source=None, timerange=None, flareType=None, GOESclass=None, activeRegion=None)`
 
@@ -491,11 +549,28 @@ checked during download, but the next `getData()` call checks it and raises
 `FlareDatabaseInvalidError` if the download was incomplete or wasn't a
 database.
 
+### `update_database(sources=None, output_path=None)`
+
+Python version of `flare-record-update`; see
+[Updating the data](#updating-the-data). `sources` is `'LMSAL'`, `'NOAA'`,
+`'NCEI'` or a list of them (case doesn't matter); leave it out for all three.
+Returns `{source: {'added': n}}`, or `{source: {'error': message}}` for a
+source that failed, where `n` is the net change in that source's rows.
+Raises `ValueError` for an unknown source and `FlareDatabaseError` if the
+database is missing or broken.
+
 ### `flare-record-build`
 
 Terminal command that calls `build_database()` with paths taken from
 environment variables, or `data/events.json` and `data/noaa_data` in the
 current folder. Takes no arguments. See [Configuration](#configuration).
+If `FLARE_RECORD_NCEI_CSV` is set, or `data/goes_sciquality/` holds an NCEI
+report, its flares are added too.
+
+### `flare-record-update`
+
+Terminal command that calls `update_database()`; `--source` limits it to the
+sources named. See [Updating the data](#updating-the-data).
 
 ## How it works
 

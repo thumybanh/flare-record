@@ -5,7 +5,7 @@ from .db import connect
 from .setup import CLASS_RE
 
  
-VALID_SOURCES = {"NOAA", "LMSAL"}
+VALID_SOURCES = {"NOAA", "LMSAL", "NCEI"}
 VALID_FAMILIES = {"A", "B", "C", "M", "X"}
 
 def _goes_class_condition(GOESclass):
@@ -78,7 +78,7 @@ def _timerange_bounds(timerange):
 def getData(source=None, timerange=None, flareType=None, GOESclass=None, activeRegion=None):
     """Returns matching flares from the local database as a list of dicts, sorted by begin time.
 
-    source: "NOAA", "LMSAL", or a list of both; omit for both.
+    source: "NOAA", "LMSAL", "NCEI" (present once update_database() has added it), or a list of them; omit for all.
     timerange: "2024", "202405", "20240514", "2024-05-14", a date/datetime, or a (start, end) pair of those.
                A flare matches if it began inside the range (UTC).
     flareType: class family, "A" through "X".

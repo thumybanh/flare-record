@@ -5,10 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "flare_record"
 version = "0.1.0"
-description = "Search LMSAL and NOAA solar flare records from a local database"
+description = "Search LMSAL, NOAA and NCEI solar flare records from a local database"
 requires-python = ">=3.9"
 dependencies = [
     "httpx",
+    "beautifulsoup4",
 ]
 
 [project.optional-dependencies]
@@ -16,6 +17,7 @@ test = ["pytest"]
  
 [project.scripts]
 flare-record-build = "flare_record.setup:_build_cli"
+flare-record-update = "flare_record.update:_update_cli"
  
 [tool.setuptools]
 packages = ["flare_record"]
