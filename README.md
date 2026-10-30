@@ -675,8 +675,12 @@ Things that can look surprising:
   flare on 2019-08-18 is `A0.0`. That's what the source files say.
   `GOESclass='C'` includes `C0.9`; `GOESclass='C1'` does not.
 - **Near-duplicate NOAA rows.** NOAA sometimes lists the same flare twice
-  with different end times (e.g. AR 13664, X1.0 at 2024-05-08 21:08). Only
-  rows identical in every column are removed, so both stay.
+  with slightly different details: one line missing the active region, start
+  times a minute or more apart, or different end times (e.g. AR 13664, X1.0
+  at 2024-05-08 21:08). Only rows identical in every column are removed, so
+  both stay, kept as NOAA published them. In the October 2026 data that is 21
+  flares out of about 56,500 (0.04%) that share a class and peak time and
+  whose regions agree or are missing on one line.
 - **Lowercase LMSAL classes.** LMSAL wrote some 2006–2009 A-class flares
   in lowercase (`a3.7`). They're included as `A3.7`.
 
