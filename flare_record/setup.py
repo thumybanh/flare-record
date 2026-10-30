@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .db import DEFAULT_DB_PATH, get_db_path
+from .dedupe import merge_duplicates, position_without_ar
 
 # Older NOAA reports write classes as "X1", "C1.23", "C6,2" or a bare "C"; newer ones and LMSAL use "X1.0".
 CLASS_RE = re.compile(r"([ABCMX])(\d+(?:[.,]\d+)?)?")
@@ -89,7 +90,8 @@ def _time_after(begin_dt, hms_string):
  
 
 def _load_lmsal_events(events_json_path):
-    return _lmsal_rows(json.load(open(events_json_path)))
+    # an events.json that still lists one flare twice (LMSAL's duplicates) is merged first; one that is already merged is unchanged
+    return _lmsal_rows(merge_duplicates(json.load(open(events_json_path))))
 
 def _lmsal_rows(raw_events):
     # raw_events: dicts shaped like LMSAL's events.json entries (also what update_database() scrapes)
@@ -113,6 +115,8 @@ def _lmsal_rows(raw_events):
             "end_time": end_dt.isoformat() if end_dt else None,
             "goes_class": goes_class, "goes_magnitude": goes_magnitude,
             "active_region": active_region,
+            # LMSAL's derived position without the "( AR )" part; what tells two same-class, same-peak flares apart
+            "position": position_without_ar(ev.get("event_position")) or None,
         })
     return events
 
@@ -175,7 +179,8 @@ def build_database(events_json_path, noaa_data_dir, output_path=None, ncei_csv_p
             goes_class TEXT NOT NULL,
             goes_family TEXT NOT NULL,
             goes_magnitude REAL,
-            active_region INTEGER
+            active_region INTEGER,
+            position TEXT
         )
     """)
         # Indexes make getData()'s filters fast even as the table grows; without them, every query would scan the entire table.
@@ -204,12 +209,12 @@ def build_database(events_json_path, noaa_data_dir, output_path=None, ncei_csv_p
     # Some NOAA files repeat the same event line; keep one copy of rows that are identical in every column.
     all_rows = list(dict.fromkeys(
         (r["source"], r["begin_time"], r["peak_time"], r["end_time"],
-         r["goes_class"], r["goes_class"][0], r["goes_magnitude"], r["active_region"])
+         r["goes_class"], r["goes_class"][0], r["goes_magnitude"], r["active_region"], r.get("position"))
         for r in lmsal_rows + noaa_rows + ncei_rows
     ))
     conn.executemany(
         "INSERT INTO flares (source, begin_time, peak_time, end_time, "
-        "goes_class, goes_family, goes_magnitude, active_region) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "goes_class, goes_family, goes_magnitude, active_region, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         all_rows
     )
     conn.commit()

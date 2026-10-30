@@ -63,24 +63,113 @@ def test_ncei_rows_are_a_source_of_their_own(db):
         "end_time": "2024-05-14T02:19:00", "goes_class": "X1.7", "active_region": 3664}]
 
 
+def test_build_stores_lmsal_position_without_the_region_and_merges_duplicates(tmp_path):
+    events = tmp_path / "events.json"
+    events.write_text(json.dumps([
+        listed("a", "2024/05/15 08:00:00", "08:10:00", "08:30:00", "M2.0", "N10E10"),
+        listed("b", "2024/05/15 08:01:00", "08:10:00", "08:29:00", "M2.0", "N10E10( 3664 )"),   # same flare
+        listed("c", "2024/05/15 09:00:00", "09:10:00", "09:30:00", "C1.0", "")]))
+    noaa = tmp_path / "noaa"
+    noaa.mkdir()
+    path = build_database(events, noaa, tmp_path / "flares.db")
+    assert lmsal_rows(path) == [("2024-05-15T08:00:00", "2024-05-15T08:30:00", "M2.0", 3664, "N10E10"),
+                                ("2024-05-15T09:00:00", "2024-05-15T09:30:00", "C1.0", None, None)]
+
+
 # --- LMSAL -------------------------------------------------------------------
+
+SNAP = "https://www.lmsal.com/solarsoft/last_events-2024/last_events_{}/index.html"
+
+
+def listed(id, start, peak, stop, cls, position="N10E10( 3664 )", snaps=("20240516_0000",)):
+    return dict(lmsal(start, peak, stop, cls, position), event_id=id, seen_in_dates=[SNAP.format(n) for n in snaps])
+
+
+def lmsal_rows(db):
+    conn = sqlite3.connect(str(db))
+    try:
+        return conn.execute("SELECT begin_time, end_time, goes_class, active_region, position FROM flares "
+                            "WHERE source = 'LMSAL' ORDER BY begin_time").fetchall()
+    finally:
+        conn.close()
+
 
 def test_lmsal_adds_only_flares_it_does_not_have(db, monkeypatch):
     asked = []
 
     def fake(cutoff):
         asked.append(cutoff)
-        return [dict(lmsal("2024/05/14 12:40:00", "12:55:00", "13:05:00", "X1.2"), event_id="a"),   # have it
-                dict(lmsal("2024/05/15 08:00:00", "08:10:00", "08:30:00", "M2.0"), event_id="b"),   # new
-                dict(lmsal("2024/05/01 08:00:00", "08:10:00", "08:30:00", "C1.0"), event_id="c")]   # before the window
+        return [listed("a", "2024/05/14 12:40:00", "12:55:00", "13:05:00", "X1.2"),   # have it
+                listed("b", "2024/05/15 08:00:00", "08:10:00", "08:30:00", "M2.0")]   # new
     monkeypatch.setattr(update, "_fetch_lmsal", fake)
 
     assert update.update_database("lmsal") == {"LMSAL": {"added": 1}}
     assert asked == ["20240507"]   # a week before the newest LMSAL flare (2024-05-14 12:40)
-    assert [r[:2] for r in rows(db, "LMSAL")] == [
-        ("2024-05-14T02:03:00", "X1.7"), ("2024-05-14T12:40:00", "X1.2"), ("2024-05-15T08:00:00", "M2.0")]
+    assert [r[:3] for r in lmsal_rows(db)] == [
+        ("2024-05-14T02:03:00", "2024-05-14T02:19:00", "X1.7"),
+        ("2024-05-14T12:40:00", "2024-05-14T13:05:00", "X1.2"),
+        ("2024-05-15T08:00:00", "2024-05-15T08:30:00", "M2.0")]
 
     assert update.update_database("lmsal") == {"LMSAL": {"added": 0}}   # again: nothing new
+
+
+def test_the_same_flare_listed_twice_is_stored_once(db, monkeypatch):
+    # LMSAL listed it at 08:00 and 08:01 (same class, peak and position); the region number is on only one
+    monkeypatch.setattr(update, "_fetch_lmsal", lambda cutoff: [
+        listed("a", "2024/05/15 08:01:00", "08:10:00", "08:30:00", "M2.0", "N10E10"),
+        listed("b", "2024/05/15 08:00:00", "08:10:00", "08:28:00", "M2.0", "N10E10( 3664 )")])
+    assert update.update_database("LMSAL") == {"LMSAL": {"added": 1}}
+    new = [r for r in lmsal_rows(db) if r[0].startswith("2024-05-15")]
+    assert new == [("2024-05-15T08:00:00", "2024-05-15T08:28:00", "M2.0", 3664, "N10E10")]
+
+
+def test_flares_with_different_positions_are_not_merged(db, monkeypatch):
+    # same class and peak time, different place on the Sun: two flares
+    monkeypatch.setattr(update, "_fetch_lmsal", lambda cutoff: [
+        listed("a", "2024/05/15 08:00:00", "08:10:00", "08:30:00", "M2.0", "S17E86( 2378 )"),
+        listed("b", "2024/05/15 08:05:00", "08:10:00", "08:30:00", "M2.0", "N11E36( 2376 )")])
+    assert update.update_database("LMSAL") == {"LMSAL": {"added": 2}}
+    assert [r[3:] for r in lmsal_rows(db) if r[0].startswith("2024-05-15")] == [(2378, "S17E86"), (2376, "N11E36")]
+
+
+def test_a_corrected_start_replaces_the_stored_version(db, monkeypatch):
+    # the database holds 12:40; LMSAL now lists the flare only as 12:46, with the same peak and position
+    monkeypatch.setattr(update, "_fetch_lmsal", lambda cutoff: [
+        listed("a2", "2024/05/14 12:46:00", "12:55:00", "13:05:00", "X1.2")])
+    assert update.update_database("LMSAL") == {"LMSAL": {"added": 0}}
+    assert [r[0] for r in lmsal_rows(db)] == ["2024-05-14T02:03:00", "2024-05-14T12:46:00"]
+
+
+def test_a_database_without_positions_is_cleaned_by_start_time(tmp_path, monkeypatch):
+    # built before positions were stored: the 12:40 row has none, and neither does its duplicate at 12:41
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE flares (source TEXT NOT NULL, begin_time TEXT NOT NULL, peak_time TEXT, end_time TEXT, "
+                 "goes_class TEXT NOT NULL, goes_family TEXT NOT NULL, goes_magnitude REAL, active_region INTEGER)")
+    conn.executemany("INSERT INTO flares VALUES ('LMSAL', ?, '2024-05-14T12:55:00', '2024-05-14T13:05:00', 'X1.2', 'X', 1.2, NULL)",
+                     [("2024-05-14T12:40:00",), ("2024-05-14T12:41:00",)])
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("FLARE_RECORD_DB", str(path))
+    monkeypatch.setattr(update, "_fetch_lmsal", lambda cutoff: [
+        listed("a", "2024/05/14 12:40:00", "12:55:00", "13:05:00", "X1.2", "N10E10( 3664 )"),
+        listed("b", "2024/05/14 12:41:00", "12:55:00", "13:05:00", "X1.2", "N10E10")])
+
+    assert update.update_database("LMSAL") == {"LMSAL": {"added": -1}}
+    assert lmsal_rows(path) == [("2024-05-14T12:40:00", "2024-05-14T13:05:00", "X1.2", 3664, "N10E10")]
+    assert update.update_database("LMSAL") == {"LMSAL": {"added": 0}}
+
+
+def test_since_re_reads_lmsal_from_that_date(db, monkeypatch):
+    asked = []
+    monkeypatch.setattr(update, "_fetch_lmsal", lambda cutoff: asked.append(cutoff) or [])
+    update.update_database("LMSAL", since="2024-05-01")
+    update.update_database("LMSAL", since=datetime(2002, 9, 26))
+    assert asked == ["20240501", "20020926"]
+    with pytest.raises(ValueError, match="since must be"):
+        update.update_database("LMSAL", since="soon")
+    with pytest.raises(ValueError, match="since only applies to LMSAL"):
+        update.update_database("NOAA", since="20240501")
 
 
 def test_parse_lmsal_snapshot_reads_the_event_table_and_skips_note_tables():
@@ -199,3 +288,39 @@ def test_cli_prints_a_line_per_source_and_exits_1_on_failure(db, monkeypatch, ca
     assert stopped.value.code == 1
     out = capsys.readouterr().out
     assert "LMSAL: +0 flares" in out and "NCEI: FAILED" in out
+
+
+def test_an_entry_lmsal_revised_in_place_is_replaced_not_duplicated(db, monkeypatch):
+    # same start and position, but LMSAL changed the class from X1.2 to X1.1
+    monkeypatch.setattr(update, "_fetch_lmsal", lambda cutoff: [
+        listed("a", "2024/05/14 12:40:00", "12:55:00", "13:05:00", "X1.1")])
+    assert update.update_database("LMSAL") == {"LMSAL": {"added": 0}}
+    assert [r[0:3:2] for r in lmsal_rows(db)] == [("2024-05-14T02:03:00", "X1.7"), ("2024-05-14T12:40:00", "X1.1")]
+
+
+def old_database(tmp_path, monkeypatch, region, peak):
+    # built before positions were stored
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE flares (source TEXT NOT NULL, begin_time TEXT NOT NULL, peak_time TEXT, end_time TEXT, "
+                 "goes_class TEXT NOT NULL, goes_family TEXT NOT NULL, goes_magnitude REAL, active_region INTEGER)")
+    conn.execute("INSERT INTO flares VALUES ('LMSAL', '2024-05-14T12:40:00', ?, '2024-05-14T13:05:00', 'X1.2', 'X', 1.2, ?)",
+                 (peak, region))
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("FLARE_RECORD_DB", str(path))
+    monkeypatch.setattr(update, "_fetch_lmsal", lambda cutoff: [
+        listed("a", "2024/05/14 12:40:00", "12:55:00", "13:05:00", "X1.2", "N10E10( 3664 )")])
+    return path
+
+
+def test_old_row_without_position_is_replaced_when_start_and_peak_agree_even_if_the_region_was_revised(tmp_path, monkeypatch):
+    path = old_database(tmp_path, monkeypatch, region=3700, peak="2024-05-14T12:55:00")
+    assert update.update_database("LMSAL") == {"LMSAL": {"added": 0}}
+    assert [r[3] for r in lmsal_rows(path)] == [3664]
+
+
+def test_old_row_without_position_and_a_different_peak_is_a_different_flare(tmp_path, monkeypatch):
+    path = old_database(tmp_path, monkeypatch, region=3700, peak="2024-05-14T12:50:00")
+    assert update.update_database("LMSAL") == {"LMSAL": {"added": 1}}
+    assert [r[3] for r in lmsal_rows(path)] == [3700, 3664]

@@ -5,8 +5,10 @@ The installed package is a snapshot, so this lets a user catch up on their own. 
 at what the database already holds: each source is asked for flares newer than the newest one
 it has, never for its whole history again.
 
-    LMSAL  scrapes the archive snapshots dated from a week before its newest flare; new
-           flares are added (LMSAL sometimes corrects an entry, hence the week of overlap).
+    LMSAL  scrapes the archive snapshots dated from a week before its newest flare, merges the
+           flares LMSAL listed more than one time (see dedupe.py), and adds them, replacing any
+           version of the same flare the database already holds (LMSAL sometimes corrects an
+           entry, hence the week of overlap).
     NOAA   downloads the daily event reports from the newest flare's day to yesterday and
            replaces the rows of those days.
     NCEI   downloads the current science-quality report (one file, republished whole) and
@@ -27,6 +29,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .db import get_db_path, validate_database
+from .dedupe import merge_duplicates
 from .exceptions import FlareDatabaseError
 from .setup import _lmsal_rows, _load_ncei_flares, _load_noaa_flares
 
@@ -53,13 +56,13 @@ def _newest(conn, source):
 
 def _row_tuple(r):
     return (r["source"], r["begin_time"], r["peak_time"], r["end_time"],
-            r["goes_class"], r["goes_class"][0], r["goes_magnitude"], r["active_region"])
+            r["goes_class"], r["goes_class"][0], r["goes_magnitude"], r["active_region"], r.get("position"))
 
 
 def _insert(conn, rows):
     conn.executemany(
         "INSERT INTO flares (source, begin_time, peak_time, end_time, "
-        "goes_class, goes_family, goes_magnitude, active_region) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "goes_class, goes_family, goes_magnitude, active_region, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [_row_tuple(r) for r in rows])
 
 
@@ -126,7 +129,8 @@ def _fetch_lmsal(cutoff):
             failed += 1
             continue
         for event in _parse_lmsal_snapshot(response.text) or []:
-            events.setdefault(event["event_id"], event)
+            # the snapshots that list an entry are how the merge tells LMSAL's latest version from an older one
+            events.setdefault(event["event_id"], dict(event, seen_in_dates=[]))["seen_in_dates"].append(url)
     if urls and failed == len(urls):
         raise FlareDatabaseError("none of the LMSAL snapshots could be downloaded")
     if failed:
@@ -134,19 +138,60 @@ def _fetch_lmsal(cutoff):
     return list(events.values())
 
 
-def _update_lmsal(conn):
+def _begin(text):
+    try:
+        return datetime.strptime(text, "%Y/%m/%d %H:%M:%S").isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
+def _update_lmsal(conn, since=None):
     newest = _newest(conn, "LMSAL")
     _need_rows("LMSAL", newest)
-    cutoff = newest - timedelta(days=LMSAL_OVERLAP_DAYS)
-    rows = [r for r in _lmsal_rows(_fetch_lmsal(cutoff.strftime("%Y%m%d")))
-            if r["begin_time"] >= cutoff.isoformat()]
+    cutoff = since or newest - timedelta(days=LMSAL_OVERLAP_DAYS)
 
-    have = {tuple(r) for r in conn.execute(
-        "SELECT source, begin_time, peak_time, end_time, goes_class, goes_family, goes_magnitude, active_region "
-        "FROM flares WHERE source = 'LMSAL' AND begin_time >= ?", (cutoff.isoformat(),))}
-    new = [r for r in {_row_tuple(r): r for r in rows}.values() if _row_tuple(r) not in have]
-    _insert(conn, new)
-    return len(new)
+    # each flare once, with every start time LMSAL gave it
+    flares = []
+    for event in merge_duplicates(_fetch_lmsal(cutoff.strftime("%Y%m%d"))):
+        for row in _lmsal_rows([event]):
+            starts = {row["begin_time"]} | {_begin(m["event_start"]) for m in event.get("merged_from") or []}
+            flares.append((row, starts - {None}))
+    if not flares:
+        return 0
+
+    # what the database already holds for those flares
+    low = (datetime.fromisoformat(min(min(starts) for _, starts in flares)) - timedelta(days=1)).isoformat()
+    by_key, by_begin = {}, {}
+    for held in conn.execute(
+            "SELECT rowid, begin_time, peak_time, end_time, goes_class, goes_magnitude, active_region, position "
+            "FROM flares WHERE source = 'LMSAL' AND begin_time >= ?", (low,)):
+        _, begin, peak, _, goes_class, _, _, position = held
+        by_key.setdefault((goes_class, peak, position), []).append(held)
+        by_begin.setdefault(begin, []).append(held)
+
+    delete, insert = set(), []
+    for row, starts in flares:
+        # the same flare: same class, peak and position; or one of the start times LMSAL gave it with
+        # the same position (an entry LMSAL revised in place, say a corrected class or region). Rows
+        # stored before positions were kept have none, so they need the same peak time instead.
+        held = list(by_key.get((row["goes_class"], row["peak_time"], row["position"]), [])) if row["peak_time"] else []
+        for begin in starts:
+            held += [h for h in by_begin.get(begin, [])
+                     if h[7] == row["position"]
+                     or (h[7] is None and (h[2] is None or row["peak_time"] is None or h[2] == row["peak_time"]))]
+        held = list({h[0]: h for h in held}.values())
+
+        fields = ("begin_time", "peak_time", "end_time", "goes_class", "goes_magnitude", "active_region", "position")
+        if row["active_region"] is None:
+            row = dict(row, active_region=next((h[6] for h in held if h[6] is not None), None))
+        if len(held) == 1 and tuple(held[0][1:]) == tuple(row[f] for f in fields):
+            continue   # already stored exactly like this
+        delete |= {h[0] for h in held}
+        insert.append(row)
+
+    conn.executemany("DELETE FROM flares WHERE rowid = ?", [(i,) for i in delete])
+    _insert(conn, insert)
+    return len(insert) - len(delete)
 
 
 # ---- NOAA --------------------------------------------------------------------------------
@@ -277,7 +322,17 @@ def _update_ncei(conn):
 
 # ---- entry points ------------------------------------------------------------------------
 
-_UPDATERS = {"LMSAL": _update_lmsal, "NOAA": _update_noaa, "NCEI": _update_ncei}
+def _parse_since(since):
+    if since is None:
+        return None
+    if isinstance(since, datetime):
+        return since
+    if isinstance(since, date):
+        return datetime(since.year, since.month, since.day)
+    try:
+        return datetime.strptime(str(since).strip().replace("-", ""), "%Y%m%d")
+    except ValueError:
+        raise ValueError(f"since must be a date like 20240514 or 2024-05-14, got {since!r}") from None
 
 
 def _check_sources(sources):
@@ -290,28 +345,38 @@ def _check_sources(sources):
     return list(dict.fromkeys(cleaned))
 
 
-def update_database(sources=None, output_path=None):
+def update_database(sources=None, output_path=None, since=None):
     """Adds the flares published since the database was last updated.
 
     sources: "LMSAL", "NOAA", "NCEI" or a list of them; omit for all three.
     output_path: the database to update (defaults to the one getData() reads).
+    since: LMSAL only: re-read its archive from this date ("20240514", "2024-05-14" or a date)
+           instead of from a week before the newest flare. Merges the duplicates LMSAL listed
+           from then on, including in databases built before positions were stored.
 
     Returns {source: {"added": n}} or {source: {"error": message}}; "added" is the net change
     in that source's rows. A source that fails is left as it was and the others still run.
     Needs an existing database (flare-record-build) to continue from.
     """
     names = _check_sources(sources)
+    since = _parse_since(since)
+    if since is not None and "LMSAL" not in names:
+        raise ValueError("since only applies to LMSAL")
     path = Path(output_path) if output_path else get_db_path()
     validate_database(path)
 
+    updaters = {"LMSAL": lambda conn: _update_lmsal(conn, since), "NOAA": _update_noaa, "NCEI": _update_ncei}
     results = {}
     conn = sqlite3.connect(str(path))
     try:
+        with conn:
+            if "position" not in {row[1] for row in conn.execute("PRAGMA table_info(flares)")}:
+                conn.execute("ALTER TABLE flares ADD COLUMN position TEXT")   # databases built by an older version
         for name in names:
             print(f"Updating {name}...")
             try:
                 with conn:   # all of this source's changes, or none of them
-                    results[name] = {"added": _UPDATERS[name](conn)}
+                    results[name] = {"added": updaters[name](conn)}
             except Exception as e:
                 results[name] = {"error": str(e) or type(e).__name__}
     finally:
@@ -326,11 +391,13 @@ def _update_cli(argv=None):
         description="Bring your flare database up to date from LMSAL, NOAA and NCEI.")
     parser.add_argument("--source", nargs="+", metavar="SOURCE", type=str.upper, choices=SOURCES,
                         help="which sources to update (default: all): lmsal noaa ncei")
+    parser.add_argument("--since", metavar="YYYYMMDD",
+                        help="re-read LMSAL's archive from this date, to merge its duplicates from then on")
     args = parser.parse_args(argv)
 
     try:
-        results = update_database(args.source)
-    except FlareDatabaseError as e:
+        results = update_database(args.source, since=args.since)
+    except (FlareDatabaseError, ValueError) as e:
         raise SystemExit(str(e))
 
     print()

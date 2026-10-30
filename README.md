@@ -159,7 +159,7 @@ like; a second run right after the first adds nothing.
 
 | Source | What it downloads |
 |---|---|
-| LMSAL | The archive snapshots from a week before your newest LMSAL flare, adding flares you don't have. The week of overlap picks up entries LMSAL corrected after posting. |
+| LMSAL | The archive snapshots from a week before your newest LMSAL flare. Flares LMSAL listed more than once are merged into one (see below), and each flare replaces any older version of itself in your database. The week of overlap picks up entries LMSAL corrected after posting. |
 | NOAA | NOAA's daily event reports from your newest flare's day to yesterday. The rows of those days are replaced. |
 | NCEI | NCEI's current science-quality report (always one whole file). It is added as source `'NCEI'` and replaces the NCEI rows, unless it has fewer flares or lost region numbers, in which case it is refused. |
 
@@ -184,8 +184,35 @@ picks up where it stopped on the next update.
 
 An update needs a database to continue from, so build or download one first.
 Your database must already hold LMSAL and NOAA flares to update those sources.
-LMSAL data you scrape yourself comes straight from the archive: it includes
-the duplicate entries that the dashboard merges into one flare.
+### LMSAL duplicates
+
+LMSAL sometimes lists one flare twice, with start times a few minutes apart, or
+corrects a start time and lists the flare again. An update merges those, using
+the same rule as the dashboard: two entries are one flare when they have the
+same GOES class, the same peak time and the same position (LMSAL's derived
+position, ignoring the `( AR )` region number, which only one of the two
+entries often has). If the positions differ they are different flares, even
+with the same class and peak time. The merged flare is LMSAL's latest version of
+the entry, or the earlier start if LMSAL kept listing both.
+
+An update stores that position (the `position` column, LMSAL rows only; it isn't
+returned by `getData`) and adds the column to databases built by older versions.
+Rows from those older databases have no position, so an update can only match them
+by their start and peak time. Duplicates already in an old database, from before the
+week an update re-reads, stay until you re-read that stretch of LMSAL's archive:
+
+```bash
+flare-record-update --source lmsal --since 20020926   # the whole archive: thousands of pages, slow
+flare-record-update --source lmsal --since 20240101   # or from a date you pick
+```
+
+`fs.update_database('LMSAL', since='2024-01-01')` does the same. Or rebuild with
+`flare-record-build` from the dashboard's `events.json`, which is already merged;
+building merges duplicates too. One limit: if LMSAL has dropped an old version of
+an entry from every archive page, an old database can't tell it was a duplicate.
+
+An update needs a database to continue from, so build or download one first.
+Your database must already hold LMSAL and NOAA flares to update those sources.
 
 ## Query guide
 
@@ -549,12 +576,14 @@ checked during download, but the next `getData()` call checks it and raises
 `FlareDatabaseInvalidError` if the download was incomplete or wasn't a
 database.
 
-### `update_database(sources=None, output_path=None)`
+### `update_database(sources=None, output_path=None, since=None)`
 
 Python version of `flare-record-update`; see
 [Updating the data](#updating-the-data). `sources` is `'LMSAL'`, `'NOAA'`,
 `'NCEI'` or a list of them (case doesn't matter); leave it out for all three.
-Returns `{source: {'added': n}}`, or `{source: {'error': message}}` for a
+`since` (a date such as `'20240514'` or `'2024-05-14'`) makes the LMSAL update
+re-read its archive from that date; it raises `ValueError` if `sources` doesn't
+include LMSAL. Returns `{source: {'added': n}}`, or `{source: {'error': message}}` for a
 source that failed, where `n` is the net change in that source's rows.
 Raises `ValueError` for an unknown source and `FlareDatabaseError` if the
 database is missing or broken.
@@ -570,7 +599,7 @@ report, its flares are added too.
 ### `flare-record-update`
 
 Terminal command that calls `update_database()`; `--source` limits it to the
-sources named. See [Updating the data](#updating-the-data).
+sources named, and `--since YYYYMMDD` re-reads LMSAL's archive from a date. See [Updating the data](#updating-the-data).
 
 ## How it works
 
