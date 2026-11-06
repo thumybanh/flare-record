@@ -10,6 +10,7 @@ single-file operation.
 """
 
 import os 
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -17,12 +18,28 @@ from pathlib import Path
 from .exceptions import FlareDatabaseInvalidError, FlareDatabaseNotFoundError
 
 DEFAULT_DB_PATH = Path.home() / ".flare_record" / "flares.db"
+# a snapshot of the database that ships inside the package, so there is something to query and update at once
+BUNDLED_DB_PATH = Path(__file__).parent / "data" / "flares.db"
 REQUIRED_COLUMNS = {"source", "begin_time", "peak_time", "end_time",
                     "goes_class", "goes_family", "goes_magnitude", "active_region"}
 
 def get_db_path(): 
     override = os.environ.get("FLARE_RECORD_DB")
     return Path(override).expanduser() if override else DEFAULT_DB_PATH
+
+def install_bundled_database(path):
+    """First use: copies the database that ships with the package to the default location.
+
+    Does nothing when the user already has a database there (an upgrade never overwrites it, so
+    their updates are kept) or points FLARE_RECORD_DB somewhere else. It is a copy, not a link,
+    because the install folder is often read-only and updates go into the user's own file."""
+    if path != DEFAULT_DB_PATH or path.exists() or not BUNDLED_DB_PATH.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Copying the database that ships with flare_record to {path} (update it with flare-record-update)")
+    part = path.with_name(path.name + ".part")   # a half-copied file must never look like a database
+    shutil.copyfile(BUNDLED_DB_PATH, part)
+    os.replace(part, path)
 
 def validate_database(path):
     if not path.exists(): 
@@ -59,5 +76,6 @@ def validate_database(path):
 
 def connect():
     path = get_db_path()
+    install_bundled_database(path)
     validate_database(path)
     return sqlite3.connect(str(path))

@@ -61,30 +61,9 @@ git clone https://github.com/thumybanh/flare-record
 pip install -e flare-record
 ```
 
-**2. Build the database** (once, from the root of the
-[`solar-events-dashboard`](https://github.com/thumybanh/solar-events-dashboard)
-repo, which holds the source data; it reads `data/events.json` and
-`data/noaa_data/`, and running it from any other folder fails with
-`Can't find data/events.json` unless you set the paths, see
-[Configuration](#configuration)):
-
-```bash
-flare-record-build
-```
-
-```
-Loading LMSAL events from data/events.json...
-  50371 events
-Loading NOAA flares from data/noaa_data...
-  56311 flares
-
-Wrote 106651 rows to /Users/you/.flare_record/flares.db
-```
-
-Run it again whenever `data/events.json` or `data/noaa_data/` change. It replaces
-the old database each time.
-
-**3. Query it:**
+**2. Query it.** The package ships with a snapshot of the database, so there is nothing
+to build or download. The first query copies it to `~/.flare_record/flares.db`
+(about 30 MB: LMSAL, NOAA and NCEI flares up to early November 2026):
 
 ```python
 import flare_record as fs
@@ -93,6 +72,42 @@ results = fs.getData(source='NOAA', flareType='x')
 print(len(results))            # 281
 print(results[0]['goes_class'])  # X2.1
 ```
+
+**3. Catch up on newer flares** whenever you like, by typing one command in a
+terminal. It adds what has been published since your database's newest flare, straight
+from LMSAL, NOAA and NCEI to your own computer:
+
+```bash
+flare-record-update
+```
+
+Nothing runs on its own: the package is a snapshot and your copy only changes when
+you update it. See [Updating the data](#updating-the-data).
+
+**Rebuilding from source data** (optional) replaces your database with one built from
+the [`solar-events-dashboard`](https://github.com/thumybanh/solar-events-dashboard)
+repo, which holds the source data. Run it from the root of that repo; it reads
+`data/events.json` and `data/noaa_data/` (and `data/goes_sciquality/` if present), and
+running it from any other folder fails with `Can't find data/events.json` unless you set
+the paths, see [Configuration](#configuration):
+
+```bash
+flare-record-build
+```
+
+```
+Loading LMSAL events from data/events.json...
+  50348 events
+Loading NOAA flares from data/noaa_data...
+  56606 flares
+Loading NCEI flares from data/goes_sciquality/sci_xrsf-l2-flrpt_geo_s19950103_e20261003_v1-0-1.csv...
+  81581 flares
+
+Wrote 188504 rows to /Users/you/.flare_record/flares.db
+```
+
+It replaces your database each time, including any updates you made, so most people
+never need it.
 
 ## Trying it in the terminal
 
@@ -110,14 +125,16 @@ Then at the `>>>` prompt:
 >>> import flare_record as fs
 >>> r = fs.getData(GOESclass='X1', timerange='20240514')
 >>> len(r)
-4
+6
 >>> for x in r:
 ...     print(x['source'], x['begin_time'], x['goes_class'], x['active_region'])
 ...
 LMSAL 2024-05-14T02:03:00 X1.7 3664
 NOAA 2024-05-14T02:03:00 X1.7 3664
+NCEI 2024-05-14T02:03:00 X1.6 3664
 LMSAL 2024-05-14T12:40:00 X1.2 3664
 NOAA 2024-05-14T12:40:00 X1.2 3664
+NCEI 2024-05-14T12:40:00 X1.2 3664
 >>> help(fs.getData)      # every option, in the terminal
 >>> exit()
 ```
@@ -182,8 +199,12 @@ reported (`{'NCEI': {'error': '...'}}`, and the command exits with status 1),
 and the other sources still update. A source that was interrupted partway
 picks up where it stopped on the next update.
 
-An update needs a database to continue from, so build or download one first.
-Your database must already hold LMSAL and NOAA flares to update those sources.
+An update continues from your own database. If you have none, the one that ships with
+the package is copied first, so a fresh install can update straight away. Upgrading the
+package never replaces your database, so your updates are kept; delete
+`~/.flare_record/flares.db` to start again from the newer snapshot that ships with the
+new version.
+
 ### LMSAL duplicates
 
 LMSAL sometimes lists one flare twice, with start times a few minutes apart, or
@@ -211,13 +232,10 @@ flare-record-update --source lmsal --since 20240101   # or from a date you pick
 building merges duplicates too. One limit: if LMSAL has dropped an old version of
 an entry from every archive page, an old database can't tell it was a duplicate.
 
-An update needs a database to continue from, so build or download one first.
-Your database must already hold LMSAL and NOAA flares to update those sources.
-
 ## Query guide
 
 Copy any of these into Python after `import flare_record as fs`. Output is
-from the real database (built September 2026), shortened with `...`.
+from the snapshot that ships with the package (built 2026-11-06), shortened with `...`.
 
 ### One filter
 
@@ -225,22 +243,22 @@ from the real database (built September 2026), shortened with `...`.
 # Every X-class flare NOAA has recorded
 fs.getData(source='NOAA', flareType='x')         # 281 flares
 
-# Everything from both sources on one day
-fs.getData(timerange='20240514')                  # 17 flares
+# Everything from every source on one day
+fs.getData(timerange='20240514')                  # 24 flares: 11 LMSAL, 6 NOAA, 7 NCEI
 
 # Only LMSAL, or two sources named explicitly (leaving source out means every source in the database)
 fs.getData(source='lmsal', timerange='20240514')  # 11 flares
 fs.getData(source=['NOAA', 'LMSAL'], timerange='20240514')  # 17 flares
 
 # Every flare in the database
-fs.getData()                                      # 106,651 flares
+fs.getData()                                      # 188,975 flares
 ```
 
 ### Dates: a year, a month, a day, a range, or a time window
 
 ```python
-fs.getData(flareType='x', timerange='2024')       # 105 flares, all of 2024
-fs.getData(flareType='x', timerange='2024-05')    # 41 flares, May 2024
+fs.getData(flareType='x', timerange='2024')       # 157 flares, all of 2024
+fs.getData(flareType='x', timerange='2024-05')    # 62 flares, May 2024
 fs.getData(timerange=('2024-05-10', '2024-05-11'))  # both days, inclusive
 
 from datetime import datetime
@@ -250,17 +268,17 @@ fs.getData(timerange=(datetime(2024, 5, 14, 12), datetime(2024, 5, 14, 18)))
 ```
 LMSAL  2024-05-14T12:40:00  X1.2  AR 3664
 NOAA   2024-05-14T12:40:00  X1.2  AR 3664
+NCEI   2024-05-14T12:40:00  X1.2  AR 3664
 LMSAL  2024-05-14T15:16:00  C9.7  AR 3664
 NOAA   2024-05-14T15:16:00  C9.6  AR 3664
-LMSAL  2024-05-14T16:46:00  X8.7  AR 3664
-...    (8 flares)
+...    (12 flares)
 ```
 
 ### GOES class: a family, a bin, or an exact class
 
 ```python
 fs.getData(GOESclass='X')                         # every X flare (same as flareType='x')
-fs.getData(GOESclass='X1', timerange='202405')    # 26 flares: X1.0 through X1.9
+fs.getData(GOESclass='X1', timerange='202405')    # 39 flares: X1.0 through X1.9
 fs.getData(GOESclass='X1.0', source='NOAA', timerange=('1996', '2002'))  # exactly X1.0
 ```
 
@@ -273,19 +291,19 @@ NOAA   2000-07-11T12:12:00  X1.0  AR 9077    <- NOAA wrote this one as "X1"
 ...    (8 flares)
 ```
 
-### One active region, both sources side by side
+### One active region, all sources side by side
 
 ```python
-fs.getData(activeRegion=13664, flareType='x')     # 23 flares
+fs.getData(activeRegion=13664, flareType='x')     # 34 flares
 ```
 
 ```
 LMSAL  2024-05-08T04:37:00  X1.0  AR 3664
 NOAA   2024-05-08T04:37:00  X1.0  AR 3664
+NCEI   2024-05-08T04:37:00  X1.0  AR 3664
+NCEI   2024-05-08T21:07:00  X1.0  AR 3664
 LMSAL  2024-05-08T21:08:00  X1.0  AR 3664
 NOAA   2024-05-08T21:08:00  X1.0  AR 3664
-NOAA   2024-05-08T21:08:00  X1.0  AR 3664
-LMSAL  2024-05-09T08:45:00  X2.3  AR 3664
 ...
 ```
 
@@ -319,7 +337,7 @@ Counter(r['goes_class'][0] for r in may)
 
 # By source
 Counter(r['source'] for r in fs.getData(flareType='x', timerange='2024'))
-# {'LMSAL': 51, 'NOAA': 54}
+# {'LMSAL': 51, 'NOAA': 54, 'NCEI': 52}
 
 # By year
 x_flares = fs.getData(source='NOAA', flareType='x', timerange=('2020', '2025'))
@@ -367,9 +385,9 @@ flare = fs.getData(source='NOAA', GOESclass='X8.7', timerange='2024')[0]
 duration_minutes(flare)    # 16.0
 ```
 
-### Compare LMSAL and NOAA side by side
+### Compare the catalogs side by side
 
-Group rows by begin time to see where the two catalogs agree:
+Group rows by begin time to see where LMSAL, NOAA and NCEI agree:
 
 ```python
 from collections import defaultdict
@@ -383,21 +401,22 @@ for start, classes in by_start.items():
 ```
 
 ```
-2024-05-03T02:11:00 {'LMSAL': 'X1.7', 'NOAA': 'X1.6'}
-2024-05-05T05:47:00 {'LMSAL': 'X1.3', 'NOAA': 'X1.3'}
-2024-05-05T11:41:00 {'LMSAL': 'X1.3', 'NOAA': 'X1.2'}
-2024-05-06T05:38:00 {'LMSAL': 'X4.5', 'NOAA': 'X4.5'}
+2024-05-03T02:11:00 {'LMSAL': 'X1.7', 'NOAA': 'X1.6', 'NCEI': 'X1.6'}
+2024-05-05T05:47:00 {'LMSAL': 'X1.3', 'NOAA': 'X1.3', 'NCEI': 'X1.3'}
+2024-05-05T11:41:00 {'LMSAL': 'X1.3', 'NOAA': 'X1.2', 'NCEI': 'X1.2'}
+2024-05-06T05:38:00 {'LMSAL': 'X4.5', 'NOAA': 'X4.5', 'NCEI': 'X4.4'}
 ...
 ```
 
 ```python
-# Flares where the two catalogs give different classes
+# Flares where the catalogs give different classes (10 of the 23 start times in May 2024)
 {start: c for start, c in by_start.items() if len(set(c.values())) > 1}
 ```
 
-This pairs flares only when both sources give the *exact same* begin
-time. The sources sometimes differ by a minute or more, so a flare that
-shows up under one source only may still be in the other with a slightly
+This pairs flares only when the sources give the *exact same* begin
+time. They sometimes differ by a minute or more (NCEI began one X1.0 on
+2024-05-08 at 21:07, a minute before LMSAL and NOAA), so a flare that shows
+up under one source only may still be in the others with a slightly
 different time.
 
 ### Save to CSV
@@ -522,7 +541,7 @@ Everything below is available after `import flare_record as fs`.
 | Name | What it does |
 |---|---|
 | `getData(...)` | Query the database. See [Filters](#filters). |
-| `build_database(events_json_path, noaa_data_dir, output_path=None)` | Build the database from source files |
+| `build_database(events_json_path, noaa_data_dir, output_path=None, ncei_csv_path=None)` | Build the database from source files |
 | `download_database(url, output_path=None)` | Download a pre-built database file |
 | `update_database(sources=None, output_path=None)` | Bring the database up to date from the sources |
 | `FlareDatabaseError` | Base class for database errors |
@@ -540,11 +559,12 @@ Returns a list of dicts sorted by begin time (see
 unusable filter value and `FlareDatabaseError` if the database is missing
 or broken.
 
-### `build_database(events_json_path, noaa_data_dir, output_path=None)`
+### `build_database(events_json_path, noaa_data_dir, output_path=None, ncei_csv_path=None)`
 
 Python version of `flare-record-build`. Reads the LMSAL `events.json` and
 the folder of NOAA `YYYYMMDDevents.txt` files, writes a fresh database, and
 returns its path. Any database already at that path is deleted first.
+`ncei_csv_path` (optional) adds the flares of an NCEI science-quality report as source `'NCEI'`.
 
 ```python
 fs.build_database('data/events.json', 'data/noaa_data')
@@ -570,7 +590,8 @@ step and don't need the source data.
 fs.download_database('https://example.com/flares.db')
 ```
 
-No pre-built database is hosted yet; until one is, use `flare-record-build`.
+A snapshot already ships with the package, so you only need this for a database
+hosted somewhere else.
 The download replaces any database already at that path. The file isn't
 checked during download, but the next `getData()` call checks it and raises
 `FlareDatabaseInvalidError` if the download was incomplete or wasn't a
@@ -604,13 +625,19 @@ sources named, and `--since YYYYMMDD` re-reads LMSAL's archive from a date. See 
 ## How it works
 
 ```
-data/events.json ─────┐
-                      ├──> flare-record-build ──> ~/.flare_record/flares.db ──> getData(...) ──> list of dicts
-data/noaa_data/*.txt ─┘    parse, clean, dedupe    SQLite, one table            filter with SQL
-      (run once, and after the source data changes)         (every query)
+ snapshot inside the package ──copied on first use──┐
+                                                    ├──> ~/.flare_record/flares.db ──> getData(...) ──> list of dicts
+ LMSAL, NOAA, NCEI ──> flare-record-update ─────────┘    SQLite, one table             filter with SQL
+   (new flares only, when you type it)                                                  (every query)
 ```
 
-**Build step** (`flare-record-build`, code in `flare_record/setup.py`):
+The package ships with a snapshot of the database. The first query copies it to your own
+`~/.flare_record/flares.db`, and `flare-record-update` adds newer flares to that copy.
+The snapshot is built by the steps below, from the dashboard's data
+(`data/events.json`, `data/noaa_data/*.txt`, `data/goes_sciquality/`), and
+`flare-record-build` runs them again if you want a database from source data.
+
+**Build step** (`flare-record-build`, code in `flare_record/setup.py`; this is how the shipped snapshot is made):
 
 1. Reads every LMSAL event from `data/events.json` and every `XRA` (X-ray
    flare) line from the `data/noaa_data/YYYYMMDDevents.txt` files. Other
@@ -649,21 +676,24 @@ flare-record/
 │   ├── __init__.py          what `import flare_record` exposes
 │   ├── query.py             getData() and filter checks
 │   ├── setup.py             build_database(), download_database(), flare-record-build
-│   ├── db.py                finds and validates the database file
-│   └── exceptions.py        FlareDatabaseNotFoundError, FlareDatabaseInvalidError
-└── tests/test_query.py
+│   ├── update.py            update_database(), flare-record-update
+│   ├── dedupe.py            merges LMSAL entries that list one flare twice
+│   ├── db.py                finds and validates the database file; copies the shipped snapshot
+│   ├── exceptions.py        FlareDatabaseNotFoundError, FlareDatabaseInvalidError
+│   └── data/flares.db       the snapshot that ships with the package
+└── tests/                   test_query.py, test_update.py, test_dedupe.py, test_bundled.py
 ```
 
 ## Notes on the data
 
-As of the September 2026 build:
+The snapshot that ships with the package, built on 2026-11-06:
 
-| | LMSAL | NOAA |
-|---|---|---|
-| Rows | 50,371 | 56,280 |
-| First flare | 2002-09-26 | 1996-07-31 |
-| Last flare | 2026-09-24 | 2026-09-24 |
-| Rows with no active region | about 11,000 | about 15,500 |
+| | LMSAL | NOAA | NCEI |
+|---|---|---|---|
+| Rows | 50,396 | 56,622 | 81,957 |
+| First flare | 2002-09-26 | 1996-07-31 | 1995-01-03 |
+| Last flare | 2026-11-04 | 2026-11-05 | 2026-10-27 |
+| Rows with no active region | about 11,200 | about 15,500 | about 44,700 |
 
 Things that can look surprising:
 
@@ -688,9 +718,10 @@ Things that can look surprising:
 
 | Environment variable | Used by | Default |
 |---|---|---|
-| `FLARE_RECORD_DB` | `getData()`, `flare-record-build`, and `build_database()` / `download_database()` when no `output_path` is given | `~/.flare_record/flares.db` |
+| `FLARE_RECORD_DB` | `getData()`, `update_database()`, `flare-record-build`, and `build_database()` / `download_database()` when no `output_path` is given. When set, the shipped snapshot is not copied there, so the file must already exist | `~/.flare_record/flares.db` |
 | `FLARE_RECORD_EVENTS_JSON` | `flare-record-build` | `data/events.json` under the current folder |
 | `FLARE_RECORD_NOAA_DIR` | `flare-record-build` | `data/noaa_data` under the current folder |
+| `FLARE_RECORD_NCEI_CSV` | `flare-record-build` | the newest report in `data/goes_sciquality/`, if there is one |
 
 To build from outside the repo root:
 

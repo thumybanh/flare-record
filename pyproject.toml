@@ -21,6 +21,9 @@ flare-record-update = "flare_record.update:_update_cli"
  
 [tool.setuptools]
 packages = ["flare_record"]
+
+[tool.setuptools.package-data]
+flare_record = ["data/flares.db"]
  
 [tool.pytest.ini_options]
 testpaths = ["tests"]

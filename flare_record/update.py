@@ -28,7 +28,7 @@ import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from .db import get_db_path, validate_database
+from .db import get_db_path, install_bundled_database, validate_database
 from .dedupe import merge_duplicates
 from .exceptions import FlareDatabaseError
 from .setup import _lmsal_rows, _load_ncei_flares, _load_noaa_flares
@@ -356,13 +356,15 @@ def update_database(sources=None, output_path=None, since=None):
 
     Returns {source: {"added": n}} or {source: {"error": message}}; "added" is the net change
     in that source's rows. A source that fails is left as it was and the others still run.
-    Needs an existing database (flare-record-build) to continue from.
+    Continues from the database you have: the one that ships with the package is copied to the
+    default location first if you have none (flare-record-build makes a fresh one).
     """
     names = _check_sources(sources)
     since = _parse_since(since)
     if since is not None and "LMSAL" not in names:
         raise ValueError("since only applies to LMSAL")
     path = Path(output_path) if output_path else get_db_path()
+    install_bundled_database(path)
     validate_database(path)
 
     updaters = {"LMSAL": lambda conn: _update_lmsal(conn, since), "NOAA": _update_noaa, "NCEI": _update_ncei}
