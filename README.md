@@ -48,11 +48,17 @@ the API running.
 Requires Python 3.9 or newer. The dependencies, `httpx` and `beautifulsoup4`,
 install automatically (they're used only to download and update data).
 
-**1. Install** (into any virtual environment):
+**1. Install** (into any virtual environment). For research, install an exact release so
+the code and the shipped snapshot are the same ones every time, not whatever is on `main`:
 
 ```bash
-pip install git+https://github.com/thumybanh/flare-record
+pip install git+https://github.com/thumybanh/flare-record.git@v1.0.0
 ```
+
+Check what you have with `python -c "import flare_record; print(flare_record.__version__)"`.
+Each release ships the snapshot it was built with (v1.0.0: built 2026-11-17, 189,556 flares), so
+quote the release number and the date of your last `flare-record-update` when you report results.
+To follow the newest code instead, leave off `@v1.0.0`.
 
 For development, clone it and install editable instead:
 
