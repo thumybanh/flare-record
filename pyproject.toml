@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
  
 [project]
 name = "flare_record"
-version = "0.1.0"
+version = "1.0.0"
 description = "Search LMSAL, NOAA and NCEI solar flare records from a local database"
 requires-python = ">=3.9"
 dependencies = [
