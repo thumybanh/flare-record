@@ -63,7 +63,7 @@ pip install -e flare-record
 
 **2. Query it.** The package ships with a snapshot of the database, so there is nothing
 to build or download. The first query copies it to `~/.flare_record/flares.db`
-(about 30 MB: LMSAL, NOAA and NCEI flares up to early November 2026):
+(about 30 MB: LMSAL, NOAA and NCEI flares up to mid-November 2026):
 
 ```python
 import flare_record as fs
@@ -97,13 +97,13 @@ flare-record-build
 
 ```
 Loading LMSAL events from data/events.json...
-  50348 events
+  50565 events
 Loading NOAA flares from data/noaa_data...
-  56606 flares
+  56821 flares
 Loading NCEI flares from data/goes_sciquality/sci_xrsf-l2-flrpt_geo_s19950103_e20261003_v1-0-1.csv...
   81581 flares
 
-Wrote 188504 rows to /Users/you/.flare_record/flares.db
+Wrote 188936 rows to /Users/you/.flare_record/flares.db
 ```
 
 It replaces your database each time, including any updates you made, so most people
@@ -235,7 +235,7 @@ an entry from every archive page, an old database can't tell it was a duplicate.
 ## Query guide
 
 Copy any of these into Python after `import flare_record as fs`. Output is
-from the snapshot that ships with the package (built 2026-11-06), shortened with `...`.
+from the snapshot that ships with the package (built 2026-11-17), shortened with `...`.
 
 ### One filter
 
@@ -251,7 +251,7 @@ fs.getData(source='lmsal', timerange='20240514')  # 11 flares
 fs.getData(source=['NOAA', 'LMSAL'], timerange='20240514')  # 17 flares
 
 # Every flare in the database
-fs.getData()                                      # 188,975 flares
+fs.getData()                                      # 189,556 flares
 ```
 
 ### Dates: a year, a month, a day, a range, or a time window
@@ -547,7 +547,7 @@ Everything below is available after `import flare_record as fs`.
 | `FlareDatabaseError` | Base class for database errors |
 | `FlareDatabaseNotFoundError` | No database file at the path |
 | `FlareDatabaseInvalidError` | File exists but can't be used |
-| `__version__` | Package version, e.g. `'0.1.0'` |
+| `__version__` | Package version, e.g. `'1.0.0'` |
 
 Plus two terminal commands, `flare-record-build` and `flare-record-update`.
 
@@ -686,14 +686,14 @@ flare-record/
 
 ## Notes on the data
 
-The snapshot that ships with the package, built on 2026-11-06:
+The snapshot that ships with the package, built on 2026-11-17:
 
 | | LMSAL | NOAA | NCEI |
 |---|---|---|---|
-| Rows | 50,396 | 56,622 | 81,957 |
+| Rows | 50,579 | 56,804 | 82,173 |
 | First flare | 2002-09-26 | 1996-07-31 | 1995-01-03 |
-| Last flare | 2026-11-04 | 2026-11-05 | 2026-10-27 |
-| Rows with no active region | about 11,200 | about 15,500 | about 44,700 |
+| Last flare | 2026-11-16 | 2026-11-16 | 2026-11-15 |
+| Rows with no active region | about 11,300 | about 15,500 | about 44,800 |
 
 Things that can look surprising:
 
